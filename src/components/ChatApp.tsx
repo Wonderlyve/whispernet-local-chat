@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,6 +27,7 @@ import {
   Settings,
   RefreshCw
 } from 'lucide-react';
+import LocalPeersPanel from '@/components/local/LocalPeersPanel';
 
 const ChatApp = () => {
   const [username, setUsername] = useState('');
@@ -261,6 +261,9 @@ const ChatApp = () => {
             </Button>
           </CardContent>
         </Card>
+        
+        {/* Panel des pairs locaux même en mode déconnecté */}
+        <LocalPeersPanel />
       </div>
     );
   }
@@ -520,8 +523,13 @@ const ChatApp = () => {
           onEndCall={endCall}
         />
       )}
+      
+      {/* Panel des pairs locaux - toujours présent */}
+      <LocalPeersPanel />
     </div>
   );
 };
 
 export default ChatApp;
+
+}

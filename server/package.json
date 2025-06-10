@@ -1,0 +1,21 @@
+
+{
+  "name": "chatconnect-local-server",
+  "version": "1.0.0",
+  "description": "Local mDNS peer discovery server for ChatConnect",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "bonjour": "^3.5.0",
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "os": "^0.1.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
