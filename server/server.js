@@ -7,11 +7,22 @@ import os from 'os';
 const app = express();
 const PORT = 3002;
 
-// Configuration CORS pour permettre les requêtes depuis le frontend
+// Configuration CORS étendue pour permettre les requêtes depuis toutes les origines Lovable
 app.use(cors({
-  origin: ['http://localhost:8080', 'http://localhost:5173', 'http://localhost:3000'],
-  credentials: true
+  origin: [
+    'http://localhost:8080', 
+    'http://localhost:5173', 
+    'http://localhost:3000',
+    /^https:\/\/.*\.lovableproject\.com$/,
+    /^https:\/\/.*\.lovable\.dev$/
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
 }));
+
+// Middleware pour les requêtes preflight
+app.options('*', cors());
 
 app.use(express.json());
 
@@ -97,82 +108,121 @@ setInterval(() => {
   }
 }, 30000);
 
+// Middleware de logging pour debug
+app.use((req, res, next) => {
+  console.log(`📥 ${req.method} ${req.path} from ${req.headers.origin || 'unknown origin'}`);
+  next();
+});
+
 // Routes API
 
 // GET /peers - Retourner la liste des pairs découverts
 app.get('/peers', (req, res) => {
-  const peers = Array.from(discoveredPeers.values()).map(peer => ({
-    id: peer.id,
-    name: peer.name,
-    ip: peer.ip,
-    port: peer.port,
-    lastSeen: peer.lastSeen,
-    isLocal: isLocalIP(peer.ip)
-  }));
-  
-  res.json({
-    localDevice: {
-      name: deviceName,
-      ip: localIP,
-      port: PORT
-    },
-    peers: peers,
-    count: peers.length
-  });
+  try {
+    const peers = Array.from(discoveredPeers.values()).map(peer => ({
+      id: peer.id,
+      name: peer.name,
+      ip: peer.ip,
+      port: peer.port,
+      lastSeen: peer.lastSeen,
+      isLocal: isLocalIP(peer.ip)
+    }));
+    
+    const response = {
+      localDevice: {
+        name: deviceName,
+        ip: localIP,
+        port: PORT
+      },
+      peers: peers,
+      count: peers.length
+    };
+    
+    console.log(`📋 Returning ${peers.length} peers to client`);
+    res.json(response);
+  } catch (error) {
+    console.error('❌ Error in /peers:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // POST /signal - Échanger des messages de signaling WebRTC
 app.post('/signal', (req, res) => {
-  const { from, to, type, data } = req.body;
-  
-  if (!from || !to || !type) {
-    return res.status(400).json({ error: 'Missing required fields: from, to, type' });
+  try {
+    const { from, to, type, data } = req.body;
+    
+    if (!from || !to || !type) {
+      return res.status(400).json({ error: 'Missing required fields: from, to, type' });
+    }
+    
+    // Stocker le message pour le destinataire
+    const messageId = `${Date.now()}-${Math.random()}`;
+    const message = {
+      id: messageId,
+      from,
+      to,
+      type,
+      data,
+      timestamp: new Date().toISOString()
+    };
+    
+    if (!signalingMessages.has(to)) {
+      signalingMessages.set(to, []);
+    }
+    
+    signalingMessages.get(to).push(message);
+    
+    console.log(`📡 Signaling message from ${from} to ${to}: ${type}`);
+    
+    res.json({ success: true, messageId });
+  } catch (error) {
+    console.error('❌ Error in /signal:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
-  
-  // Stocker le message pour le destinataire
-  const messageId = `${Date.now()}-${Math.random()}`;
-  const message = {
-    id: messageId,
-    from,
-    to,
-    type,
-    data,
-    timestamp: new Date().toISOString()
-  };
-  
-  if (!signalingMessages.has(to)) {
-    signalingMessages.set(to, []);
-  }
-  
-  signalingMessages.get(to).push(message);
-  
-  console.log(`📡 Signaling message from ${from} to ${to}: ${type}`);
-  
-  res.json({ success: true, messageId });
 });
 
 // GET /signal/:peerId - Récupérer les messages de signaling pour un pair
 app.get('/signal/:peerId', (req, res) => {
-  const peerId = req.params.peerId;
-  const messages = signalingMessages.get(peerId) || [];
-  
-  // Vider les messages après les avoir récupérés
-  signalingMessages.set(peerId, []);
-  
-  res.json({ messages });
+  try {
+    const peerId = req.params.peerId;
+    const messages = signalingMessages.get(peerId) || [];
+    
+    // Vider les messages après les avoir récupérés
+    signalingMessages.set(peerId, []);
+    
+    res.json({ messages });
+  } catch (error) {
+    console.error('❌ Error in /signal/:peerId:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // GET /status - Statut du serveur
 app.get('/status', (req, res) => {
-  res.json({
-    status: 'running',
-    localDevice: {
-      name: deviceName,
-      ip: localIP,
-      port: PORT
-    },
-    peersCount: discoveredPeers.size,
-    uptime: process.uptime()
+  try {
+    res.json({
+      status: 'running',
+      localDevice: {
+        name: deviceName,
+        ip: localIP,
+        port: PORT
+      },
+      peersCount: discoveredPeers.size,
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Error in /status:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Route de test pour vérifier la connectivité
+app.get('/test', (req, res) => {
+  res.json({ 
+    message: 'Server is working!', 
+    timestamp: new Date().toISOString(),
+    origin: req.headers.origin
   });
 });
 
@@ -189,6 +239,12 @@ function isLocalIP(ip) {
   return localRanges.some(range => range.test(ip));
 }
 
+// Gestion des erreurs globales
+app.use((error, req, res, next) => {
+  console.error('❌ Global error handler:', error);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
 // Gestion propre de l'arrêt
 process.on('SIGINT', () => {
   console.log('\n🛑 Shutting down gracefully...');
@@ -198,8 +254,11 @@ process.on('SIGINT', () => {
   });
 });
 
-app.listen(PORT, () => {
+// Démarrer le serveur
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 ChatConnect Local Server running on port ${PORT}`);
   console.log(`📡 mDNS service published as: ${deviceName}`);
   console.log(`🌐 API endpoints available at http://${localIP}:${PORT}`);
+  console.log(`🔗 Test endpoint: http://localhost:${PORT}/test`);
+  console.log(`📊 Status endpoint: http://localhost:${PORT}/status`);
 });
