@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { useLocalPeers } from '@/hooks/useLocalPeers';
 import { LocalWebRTCService, LocalWebRTCConnection } from '@/services/localWebRTCService';
+import { MockLocalPeersService } from '@/services/mockLocalPeersService';
 import { 
   Wifi, 
   WifiOff, 
@@ -19,7 +19,9 @@ import {
   Send,
   X,
   Minimize2,
-  Maximize2
+  Maximize2,
+  Server,
+  AlertTriangle
 } from 'lucide-react';
 
 const LocalPeersPanel: React.FC = () => {
@@ -28,6 +30,9 @@ const LocalPeersPanel: React.FC = () => {
   const [newMessage, setNewMessage] = useState('');
   const [webrtcService, setWebrtcService] = useState<LocalWebRTCService | null>(null);
   const [connections, setConnections] = useState<LocalWebRTCConnection[]>([]);
+  const [useMockData, setUseMockData] = useState(false);
+  const [mockService] = useState(() => MockLocalPeersService.getInstance());
+  const [mockPeersData, setMockPeersData] = useState(mockService.getPeersData());
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Utiliser le hook pour récupérer les pairs locaux
@@ -37,13 +42,42 @@ const LocalPeersPanel: React.FC = () => {
     count, 
     isLoading, 
     isServerAvailable, 
-    refreshPeers 
+    refreshPeers,
+    retryCount 
   } = useLocalPeers(true, 3000);
+
+  // Basculer vers les données mock si le serveur n'est pas disponible après plusieurs tentatives
+  useEffect(() => {
+    if (retryCount >= 3 && !isServerAvailable && !useMockData) {
+      console.log('🔄 Switching to mock data mode');
+      setUseMockData(true);
+    } else if (isServerAvailable && useMockData) {
+      console.log('🔄 Switching back to real server data');
+      setUseMockData(false);
+    }
+  }, [retryCount, isServerAvailable, useMockData]);
+
+  // Mettre à jour les données mock périodiquement
+  useEffect(() => {
+    if (!useMockData) return;
+
+    const interval = setInterval(() => {
+      setMockPeersData(mockService.getPeersData());
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [useMockData, mockService]);
+
+  // Données à utiliser selon le mode
+  const currentLocalDevice = useMockData ? mockPeersData.localDevice : localDevice;
+  const currentPeers = useMockData ? mockPeersData.peers : peers;
+  const currentCount = useMockData ? mockPeersData.count : count;
+  const currentServerStatus = useMockData ? false : isServerAvailable;
 
   // Initialiser le service WebRTC
   useEffect(() => {
-    if (localDevice && !webrtcService) {
-      const deviceId = `${localDevice.name}-${localDevice.ip}`;
+    if (currentLocalDevice && !webrtcService) {
+      const deviceId = `${currentLocalDevice.name}-${currentLocalDevice.ip}`;
       const service = new LocalWebRTCService(deviceId);
       
       service.onConnection((connection) => {
@@ -66,7 +100,7 @@ const LocalPeersPanel: React.FC = () => {
       
       setWebrtcService(service);
     }
-  }, [localDevice, webrtcService, activeConnection]);
+  }, [currentLocalDevice, webrtcService, activeConnection]);
 
   // Auto-scroll des messages
   useEffect(() => {
@@ -112,14 +146,24 @@ const LocalPeersPanel: React.FC = () => {
     }
   };
 
+  const handleRefresh = () => {
+    if (useMockData) {
+      mockService.refreshPeers();
+      setMockPeersData(mockService.getPeersData());
+    } else {
+      refreshPeers();
+    }
+  };
+
   const getBadgeColor = () => {
-    if (!isServerAvailable) return 'destructive';
-    return count > 0 ? 'default' : 'secondary';
+    if (!currentServerStatus && !useMockData) return 'destructive';
+    return currentCount > 0 ? 'default' : 'secondary';
   };
 
   const getBadgeText = () => {
-    if (!isServerAvailable) return '🔴 Serveur local indisponible';
-    return count > 0 ? `🟢 ${count} pair(s) local` : '🔴 Aucun pair local';
+    if (!currentServerStatus && !useMockData) return '🔴 Serveur local indisponible';
+    if (useMockData) return `🟡 ${currentCount} pair(s) simulé(s)`;
+    return currentCount > 0 ? `🟢 ${currentCount} pair(s) local` : '🔴 Aucun pair local';
   };
 
   // Interface compacte (badge cliquable)
@@ -164,14 +208,15 @@ const LocalPeersPanel: React.FC = () => {
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
             <CardTitle className="text-sm font-medium text-white flex items-center gap-2">
-              {isServerAvailable ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
+              {currentServerStatus ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
               Réseau Local
+              {useMockData && <Badge variant="secondary" className="text-xs">Mode Démo</Badge>}
             </CardTitle>
             <div className="flex items-center gap-1">
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={refreshPeers}
+                onClick={handleRefresh}
                 disabled={isLoading}
                 className="p-1 h-6 w-6"
               >
@@ -192,12 +237,20 @@ const LocalPeersPanel: React.FC = () => {
             <Badge variant={getBadgeColor()} className="text-xs">
               {getBadgeText()}
             </Badge>
-            {localDevice && (
+            {currentLocalDevice && (
               <span className="text-xs text-slate-400">
-                {localDevice.name} ({localDevice.ip})
+                {currentLocalDevice.name} ({currentLocalDevice.ip})
               </span>
             )}
           </div>
+
+          {/* Message d'information pour le mode démo */}
+          {useMockData && (
+            <div className="flex items-center gap-2 p-2 bg-yellow-500/10 rounded text-yellow-300">
+              <AlertTriangle className="w-3 h-3" />
+              <span className="text-xs">Mode démo - Démarrez le serveur Node.js pour les vraies données</span>
+            </div>
+          )}
         </CardHeader>
 
         <CardContent className="pt-0">
@@ -273,7 +326,7 @@ const LocalPeersPanel: React.FC = () => {
           {/* Liste des pairs */}
           <ScrollArea className="h-32">
             <div className="space-y-2">
-              {peers.map((peer) => {
+              {currentPeers.map((peer) => {
                 const connection = connections.find(c => c.peerId === peer.id);
                 const isConnected = connection?.status === 'connected';
                 
@@ -294,6 +347,9 @@ const LocalPeersPanel: React.FC = () => {
                       </div>
                       {isConnected && (
                         <Badge variant="default" className="text-xs">connecté</Badge>
+                      )}
+                      {useMockData && (
+                        <Badge variant="secondary" className="text-xs">simulé</Badge>
                       )}
                     </div>
                     
@@ -333,7 +389,7 @@ const LocalPeersPanel: React.FC = () => {
                 );
               })}
               
-              {peers.length === 0 && isServerAvailable && (
+              {currentPeers.length === 0 && currentServerStatus && !useMockData && (
                 <div className="text-center py-4">
                   <Users className="w-8 h-8 mx-auto text-slate-500 mb-2" />
                   <p className="text-xs text-slate-400">Aucun pair détecté</p>
@@ -341,11 +397,19 @@ const LocalPeersPanel: React.FC = () => {
                 </div>
               )}
               
-              {!isServerAvailable && (
+              {!currentServerStatus && !useMockData && (
                 <div className="text-center py-4">
-                  <WifiOff className="w-8 h-8 mx-auto text-red-500 mb-2" />
+                  <Server className="w-8 h-8 mx-auto text-red-500 mb-2" />
                   <p className="text-xs text-red-400">Serveur local indisponible</p>
-                  <p className="text-xs text-slate-500">Démarrez le serveur Node.js local</p>
+                  <p className="text-xs text-slate-500">Démarrez le serveur Node.js dans le dossier /server</p>
+                  <Button 
+                    size="sm" 
+                    variant="outline" 
+                    className="mt-2 text-xs"
+                    onClick={() => setUseMockData(true)}
+                  >
+                    Utiliser mode démo
+                  </Button>
                 </div>
               )}
             </div>
